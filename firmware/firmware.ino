@@ -24,7 +24,7 @@ namespace teensydmx = ::qindesign::teensydmx;
 constexpr uint8_t kTXPin = 17;
 
 // Create the DMX sender on Serial1.
-teensydmx::Sender dmxTx{ Serial1 };
+teensydmx::Sender dmxTx{ Serial8 };
 
 // enttec pro
 unsigned char state;
@@ -36,43 +36,42 @@ Parameter<bool> _enttecModeActive;
 
 
 void onNoteOn(byte channel, byte note, byte velocity) {
-  Serial.print("Note On, ch=");
-  Serial.print(channel);
-  Serial.print(", note=");
-  Serial.print(note);
-  Serial.print(", velocity=");
-  Serial.print(velocity);
-  Serial.println();
+  // Serial.print("Note On, ch=");
+  // Serial.print(channel);
+  // Serial.print(", note=");
+  // Serial.print(note);
+  // Serial.print(", velocity=");
+  // Serial.print(velocity);
+  // Serial.println();
 
   dmxTx.set(note, velocity * 2);
 }
 
 void onNoteOff(byte channel, byte note, byte velocity) {
-  Serial.print("Note Off, ch=");
-  Serial.print(channel);
-  Serial.print(", note=");
-  Serial.print(note);
-  //Serial.print(", velocity=");
-  //Serial.print(velocity);
-  Serial.println();
+  // Serial.print("Note Off, ch=");
+  // Serial.print(channel);
+  // Serial.print(", note=");
+  // Serial.print(note);
+  // //Serial.print(", velocity=");
+  // //Serial.print(velocity);
+  // Serial.println();
   dmxTx.set(note, 0);
 }
 
 void onControlChange(byte channel, byte control, byte value) {
-  Serial.print("Control Change, ch=");
-  Serial.print(channel);
-  Serial.print(", control=");
-  Serial.print(control);
-  Serial.print(", value=");
-  Serial.print(value);
-  Serial.println();
+  // Serial.print("Control Change, ch=");
+  // Serial.print(channel);
+  // Serial.print(", control=");
+  // Serial.print(control);
+  // Serial.print(", value=");
+  // Serial.print(value);
+  // Serial.println();
+    dmxTx.set(control, value*2);
 }
 
 
 void onAfterTouchPoly(byte channel, byte note, byte velocity) {}
-void onProgramChange(byte channel, byte program) {
-  Serial.println("got program change");
-}
+void onProgramChange(byte channel, byte program) {}
 void onAfterTouch(byte channel, byte pressure) {}
 void onPitchChange(byte channel, int pitch) {}
 void onSystemExclusiveChunk(const byte* data, uint16_t length, bool last) {}
@@ -131,25 +130,27 @@ void setup() {
   Serial.begin(57600);
   _midiModeActive.setup("midiMode", true);
   _enttecModeActive.setup("enttecMode", false);
-  MIDI.begin(MIDI_CHANNEL_OMNI);
-  MIDI.setHandleNoteOn(onNoteOn);
-  MIDI.setHandleNoteOff(onNoteOff);
-  MIDI.setHandleAfterTouchPoly(onAfterTouchPoly);
-  MIDI.setHandleControlChange(onControlChange);
-  MIDI.setHandleProgramChange(onProgramChange);
-  //  MIDI.setHandleAfterTouch(onAfterTouch);
-  //  MIDI.setHandlePitchChange(onPitchChange);
-  //  MIDI.setHandleSystemExclusive(onSystemExclusiveChunk);
-  MIDI.setHandleTimeCodeQuarterFrame(onTimeCodeQuarterFrame);
-  //  MIDI.setHandleSongPosition(onSongPosition);
-  MIDI.setHandleSongSelect(onSongSelect);
-  MIDI.setHandleTuneRequest(onTuneRequest);
-  MIDI.setHandleClock(onClock);
-  MIDI.setHandleStart(onStart);
-  MIDI.setHandleContinue(onContinue);
-  MIDI.setHandleStop(onStop);
-  MIDI.setHandleActiveSensing(onActiveSensing);
-  MIDI.setHandleSystemReset(onSystemReset);
+
+
+  usbMIDI.begin();
+  usbMIDI.setHandleNoteOn(onNoteOn);
+  usbMIDI.setHandleNoteOff(onNoteOff);
+  usbMIDI.setHandleAfterTouchPoly(onAfterTouchPoly);
+  usbMIDI.setHandleControlChange(onControlChange);
+  usbMIDI.setHandleProgramChange(onProgramChange);
+  //  usbMIDI.setHandleAfterTouch(onAfterTouch);
+  //  usbMIDI.setHandlePitchChange(onPitchChange);
+  //  usbMIDI.setHandleSystemExclusive(onSystemExclusiveChunk);
+  usbMIDI.setHandleTimeCodeQuarterFrame(onTimeCodeQuarterFrame);
+  //  usbMIDI.setHandleSongPosition(onSongPosition);
+  usbMIDI.setHandleSongSelect(onSongSelect);
+  usbMIDI.setHandleTuneRequest(onTuneRequest);
+  usbMIDI.setHandleClock(onClock);
+  usbMIDI.setHandleStart(onStart);
+  usbMIDI.setHandleContinue(onContinue);
+  usbMIDI.setHandleStop(onStop);
+  usbMIDI.setHandleActiveSensing(onActiveSensing);
+  usbMIDI.setHandleSystemReset(onSystemReset);
 
 
   // Turn on the LED, for indicating activity
