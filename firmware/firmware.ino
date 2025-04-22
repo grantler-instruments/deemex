@@ -30,13 +30,16 @@ Parameter<bool> _enttecModeActive;
 
 
 void onNoteOn(byte channel, byte note, byte velocity) {
-  Serial.print("Note On, ch=");
-  Serial.print(channel);
-  Serial.print(", note=");
-  Serial.print(note);
-  Serial.print(", velocity=");
-  Serial.print(velocity);
-  Serial.println();
+  // Serial.print("Note On, ch=");
+  // Serial.print(channel);
+  // Serial.print(", note=");
+  // Serial.print(note);
+  // Serial.print(", velocity=");
+  // Serial.print(velocity);
+  // Serial.println();
+  if (note < 1 || note > 127) {
+    return;
+  }
 
   dmxTx.set(note, velocity * 2);
 }
@@ -49,7 +52,10 @@ void onNoteOff(byte channel, byte note, byte velocity) {
   // //Serial.print(", velocity=");
   // //Serial.print(velocity);
   // Serial.println();
-  // dmxTx.set(note, 0);
+  if (note < 1 || note > 127) {
+    return;
+  }
+  dmxTx.set(note, 0);
 }
 
 void onControlChange(byte channel, byte control, byte value) {
@@ -60,7 +66,10 @@ void onControlChange(byte channel, byte control, byte value) {
   // Serial.print(", value=");
   // Serial.print(value);
   // Serial.println();
-  // dmxTx.set(control, value*2);
+  if (control < 1 || control > 127) {
+    return;
+  }
+  dmxTx.set(control, value*2);
 }
 
 
