@@ -18,12 +18,6 @@ MIDI_CREATE_DEFAULT_INSTANCE();
 
 
 namespace teensydmx = ::qindesign::teensydmx;
-
-// Pin for enabling or disabling the transmitter.
-// This may not be needed for your hardware.
-constexpr uint8_t kTXPin = 17;
-
-// Create the DMX sender on Serial1.
 teensydmx::Sender dmxTx{ Serial8 };
 
 // enttec pro
@@ -36,13 +30,13 @@ Parameter<bool> _enttecModeActive;
 
 
 void onNoteOn(byte channel, byte note, byte velocity) {
-  // Serial.print("Note On, ch=");
-  // Serial.print(channel);
-  // Serial.print(", note=");
-  // Serial.print(note);
-  // Serial.print(", velocity=");
-  // Serial.print(velocity);
-  // Serial.println();
+  Serial.print("Note On, ch=");
+  Serial.print(channel);
+  Serial.print(", note=");
+  Serial.print(note);
+  Serial.print(", velocity=");
+  Serial.print(velocity);
+  Serial.println();
 
   dmxTx.set(note, velocity * 2);
 }
@@ -55,7 +49,7 @@ void onNoteOff(byte channel, byte note, byte velocity) {
   // //Serial.print(", velocity=");
   // //Serial.print(velocity);
   // Serial.println();
-  dmxTx.set(note, 0);
+  // dmxTx.set(note, 0);
 }
 
 void onControlChange(byte channel, byte control, byte value) {
@@ -66,7 +60,7 @@ void onControlChange(byte channel, byte control, byte value) {
   // Serial.print(", value=");
   // Serial.print(value);
   // Serial.println();
-    dmxTx.set(control, value*2);
+  // dmxTx.set(control, value*2);
 }
 
 
@@ -118,15 +112,6 @@ void readSerial() {
 }
 
 void setup() {
-  // const char* newManufacturer = "grantler instruments";
-  // strcpy(usb_string_manufacturer_name, newManufacturer);
-  // usb_string_manufacturer_name_len = strlen(newManufacturer);
-
-
-  // const char* newName = "deemex";
-  // strcpy(usb_string_product_name, newName);
-  // usb_string_product_name_len = strlen(newName);
-
   Serial.begin(57600);
   _midiModeActive.setup("midiMode", true);
   _enttecModeActive.setup("enttecMode", false);
@@ -156,10 +141,6 @@ void setup() {
   // Turn on the LED, for indicating activity
   pinMode(LED_BUILTIN, OUTPUT);
   digitalWriteFast(LED_BUILTIN, HIGH);
-
-  // Set the pin that enables the transmitter; may not be needed
-  pinMode(kTXPin, OUTPUT);
-  digitalWriteFast(kTXPin, HIGH);
 
   state = DMX_PRO_END_MSG;
   dmxTx.begin();
