@@ -9,13 +9,11 @@
 // }
 
 
-
 #include "config.h"
 #include <MIDI.h>
-#include <TeensyDMX.h>
+#include <TeensyDMX.h>//https://github.com/ssilverman/TeensyDMX
 #include <Parameter.h>
 MIDI_CREATE_DEFAULT_INSTANCE();
-
 
 namespace teensydmx = ::qindesign::teensydmx;
 teensydmx::Sender dmxTx{ Serial8 };
@@ -27,51 +25,93 @@ unsigned int channel;
 
 Parameter<bool> _midiModeActive;
 Parameter<bool> _enttecModeActive;
+Parameter<int> _noteOnStartChannel;
 
+// 14-bit CC handling
+struct ChannelState {
+  uint8_t msb = 0;
+  uint8_t lsb = 0;
+  bool msbReceived = false;
+  bool lsbReceived = false;
+  unsigned long lastUpdateTime = 0;
+};
+
+ChannelState channelStates[512];
+const unsigned long PAIR_TIMEOUT = 20;  // ms - if both halves arrive within this window, combine them
 
 void onNoteOn(byte channel, byte note, byte velocity) {
-  // Serial.print("Note On, ch=");
-  // Serial.print(channel);
-  // Serial.print(", note=");
-  // Serial.print(note);
-  // Serial.print(", velocity=");
-  // Serial.print(velocity);
-  // Serial.println();
+  // Use MIDI channels 1-4 to access all 512 DMX channels
+  // Channel 1: DMX 1-127, Channel 2: DMX 128-254, Channel 3: DMX 255-381, Channel 4: DMX 382-508
+  if (channel < 1 || channel > 4) {
+    return;
+  }
   if (note < 1 || note > 127) {
     return;
   }
-
-  dmxTx.set(note, velocity * 2);
+  
+  int dmxChannel = _noteOnStartChannel + (channel - 1) * 127 + note - 1;
+  if (dmxChannel >= 1 && dmxChannel <= 512) {
+    dmxTx.set(dmxChannel, velocity * 2);
+  }
 }
 
 void onNoteOff(byte channel, byte note, byte velocity) {
-  // Serial.print("Note Off, ch=");
-  // Serial.print(channel);
-  // Serial.print(", note=");
-  // Serial.print(note);
-  // //Serial.print(", velocity=");
-  // //Serial.print(velocity);
-  // Serial.println();
+  // Use MIDI channels 1-4 to access all 512 DMX channels
+  if (channel < 1 || channel > 4) {
+    return;
+  }
   if (note < 1 || note > 127) {
     return;
   }
-  dmxTx.set(note, 0);
+  
+  int dmxChannel = _noteOnStartChannel + (channel - 1) * 127 + note - 1;
+  if (dmxChannel >= 1 && dmxChannel <= 512) {
+    dmxTx.set(dmxChannel, 0);
+  }
 }
 
 void onControlChange(byte channel, byte control, byte value) {
-  // Serial.print("Control Change, ch=");
-  // Serial.print(channel);
-  // Serial.print(", control=");
-  // Serial.print(control);
-  // Serial.print(", value=");
-  // Serial.print(value);
-  // Serial.println();
-  if (control < 1 || control > 127) {
-    return;
-  }
-  dmxTx.set(control, value*2);
-}
+  // Determine if MSB (CC 0-31) or LSB (CC 32-63)
+  bool isMSB = (control < 32);
+  int baseControl = isMSB ? control : (control - 32);
+  int dmxChannel = (channel - 1) * 32 + baseControl;
 
+  if (dmxChannel >= 0 && dmxChannel < 512) {
+    unsigned long now = millis();
+
+    // Check if we should reset state due to timeout
+    if (now - channelStates[dmxChannel].lastUpdateTime > PAIR_TIMEOUT) {
+      channelStates[dmxChannel].msbReceived = false;
+      channelStates[dmxChannel].lsbReceived = false;
+    }
+
+    if (isMSB) {
+      channelStates[dmxChannel].msb = value;
+      channelStates[dmxChannel].msbReceived = true;
+      channelStates[dmxChannel].lastUpdateTime = now;
+    } else {
+      channelStates[dmxChannel].lsb = value;
+      channelStates[dmxChannel].lsbReceived = true;
+      channelStates[dmxChannel].lastUpdateTime = now;
+    }
+
+    // If we have both MSB and LSB, update DMX
+    if (channelStates[dmxChannel].msbReceived && channelStates[dmxChannel].lsbReceived) {
+      // Combine into 14-bit value
+      uint16_t fullValue = (channelStates[dmxChannel].msb << 7) | channelStates[dmxChannel].lsb;
+
+      // Scale to 8-bit DMX (0-16383 → 0-255)
+      uint8_t dmxValue = fullValue >> 6;
+
+      // Write to DMX (TeensyDMX channels are 1-indexed)
+      dmxTx.set(dmxChannel + 1, dmxValue);
+
+      // Clear flags for next pair
+      channelStates[dmxChannel].msbReceived = false;
+      channelStates[dmxChannel].lsbReceived = false;
+    }
+  }
+}
 
 void onAfterTouchPoly(byte channel, byte note, byte velocity) {}
 void onProgramChange(byte channel, byte program) {}
@@ -124,7 +164,7 @@ void setup() {
   Serial.begin(57600);
   _midiModeActive.setup("midiMode", true);
   _enttecModeActive.setup("enttecMode", false);
-
+  _noteOnStartChannel.setup("noteOnStartChannel", 1);  // Default start at DMX channel 1
 
   usbMIDI.begin();
   usbMIDI.setHandleNoteOn(onNoteOn);
@@ -132,11 +172,7 @@ void setup() {
   usbMIDI.setHandleAfterTouchPoly(onAfterTouchPoly);
   usbMIDI.setHandleControlChange(onControlChange);
   usbMIDI.setHandleProgramChange(onProgramChange);
-  //  usbMIDI.setHandleAfterTouch(onAfterTouch);
-  //  usbMIDI.setHandlePitchChange(onPitchChange);
-  //  usbMIDI.setHandleSystemExclusive(onSystemExclusiveChunk);
   usbMIDI.setHandleTimeCodeQuarterFrame(onTimeCodeQuarterFrame);
-  //  usbMIDI.setHandleSongPosition(onSongPosition);
   usbMIDI.setHandleSongSelect(onSongSelect);
   usbMIDI.setHandleTuneRequest(onTuneRequest);
   usbMIDI.setHandleClock(onClock);
@@ -145,7 +181,6 @@ void setup() {
   usbMIDI.setHandleStop(onStop);
   usbMIDI.setHandleActiveSensing(onActiveSensing);
   usbMIDI.setHandleSystemReset(onSystemReset);
-
 
   // Turn on the LED, for indicating activity
   pinMode(LED_BUILTIN, OUTPUT);
