@@ -11,8 +11,15 @@
 
 #include "config.h"
 #include <MIDI.h>
-#include <TeensyDMX.h>//https://github.com/ssilverman/TeensyDMX
+#include <TeensyDMX.h>  //https://github.com/ssilverman/TeensyDMX
 #include <Parameter.h>
+#include "DmxMessageHistory.h"
+#if HAS_DISPLAY == 1
+#include "SSD1306Display.h"
+static Display* display = nullptr;
+static uint32_t lastDisplayUpdate = 0;
+#endif
+
 MIDI_CREATE_DEFAULT_INSTANCE();
 
 namespace teensydmx = ::qindesign::teensydmx;
@@ -26,6 +33,10 @@ unsigned int channel;
 Parameter<bool> _midiModeActive;
 Parameter<bool> _enttecModeActive;
 Parameter<int> _noteOnStartChannel;
+
+
+DmxMessageHistory messageHistory[MAX_HISTORY];
+int messageIndex = 0;
 
 // 14-bit CC handling
 struct ChannelState {
@@ -42,31 +53,36 @@ const unsigned long PAIR_TIMEOUT = 20;  // ms - if both halves arrive within thi
 void onNoteOn(byte channel, byte note, byte velocity) {
   // Use MIDI channels 1-4 to access all 512 DMX channels
   // Channel 1: DMX 1-127, Channel 2: DMX 128-254, Channel 3: DMX 255-381, Channel 4: DMX 382-508
-  if (channel < 1 || channel > 4) {
+  Serial.println("note on");
+
+  if (channel < _noteOnStartChannel || channel > (_noteOnStartChannel + 4)) {
     return;
   }
   if (note < 1 || note > 127) {
     return;
   }
-  
-  int dmxChannel = _noteOnStartChannel + (channel - 1) * 127 + note - 1;
+
+  int dmxChannel = (channel - _noteOnStartChannel) * 127 + note;
+  Serial.println(dmxChannel);
   if (dmxChannel >= 1 && dmxChannel <= 512) {
     dmxTx.set(dmxChannel, velocity * 2);
+    addToHistory(dmxChannel, velocity * 2);
   }
 }
 
 void onNoteOff(byte channel, byte note, byte velocity) {
   // Use MIDI channels 1-4 to access all 512 DMX channels
-  if (channel < 1 || channel > 4) {
+  if (channel < _noteOnStartChannel || channel > (_noteOnStartChannel + 4)) {
     return;
   }
   if (note < 1 || note > 127) {
     return;
   }
-  
-  int dmxChannel = _noteOnStartChannel + (channel - 1) * 127 + note - 1;
+
+  int dmxChannel = (channel - _noteOnStartChannel) * 127 + note;
   if (dmxChannel >= 1 && dmxChannel <= 512) {
     dmxTx.set(dmxChannel, 0);
+    addToHistory(dmxChannel, 0);
   }
 }
 
@@ -105,9 +121,11 @@ void onControlChange(byte channel, byte control, byte value) {
 
       // Write to DMX (TeensyDMX channels are 1-indexed)
       dmxTx.set(dmxChannel + 1, dmxValue);
+      addToHistory(dmxChannel + 1, dmxValue);
 
       // Clear flags for next pair
-      channelStates[dmxChannel].msbReceived = false;
+      channelStates[dmxChannel]
+        .msbReceived = false;
       channelStates[dmxChannel].lsbReceived = false;
     }
   }
@@ -153,6 +171,7 @@ void readSerial() {
       channel = 1;
     } else if (state == DMX_START_CODE && channel < dataSize) {
       dmxTx.set(channel, c);
+      addToHistory(channel, c);
       channel++;
     } else if (state == DMX_START_CODE && channel == dataSize && c == DMX_PRO_END_MSG) {
       state = c;
@@ -160,11 +179,18 @@ void readSerial() {
   }
 }
 
+void addToHistory(uint16_t channel, uint8_t value) {
+  messageHistory[messageIndex].channel = channel;
+  messageHistory[messageIndex].value = value;
+  messageHistory[messageIndex].timestamp = millis();
+  messageIndex = (messageIndex + 1) % MAX_HISTORY;
+}
+
 void setup() {
   Serial.begin(57600);
   _midiModeActive.setup("midiMode", true);
   _enttecModeActive.setup("enttecMode", false);
-  _noteOnStartChannel.setup("noteOnStartChannel", 12);  // Default start at DMX channel 1
+  _noteOnStartChannel.setup("noteOnStartChannel", 13);
 
   usbMIDI.begin();
   usbMIDI.setHandleNoteOn(onNoteOn);
@@ -188,13 +214,35 @@ void setup() {
 
   state = DMX_PRO_END_MSG;
   dmxTx.begin();
+
+#if HAS_DISPLAY == 1
+  static SSD1306Display ssd1306;
+
+  display = &ssd1306;
+
+  if (!display->begin()) {
+    Serial.println("Display init failed");
+    display = nullptr;
+  }
+#endif
 }
 
 void loop() {
+  unsigned long now = millis();
+
   if (_midiModeActive) {
     usbMIDI.read();
   }
   if (_enttecModeActive) {
     readSerial();
   }
+#if HAS_DISPLAY == 1
+  if (display && (now - lastDisplayUpdate) >= UPDATE_DISPLAY_INTERVAL) {
+    lastDisplayUpdate = now;
+    display->update(_enttecModeActive ? "enttec" : "midi", _noteOnStartChannel,
+                    messageHistory,
+                    MAX_HISTORY,
+                    messageIndex);
+  }
+#endif
 }
