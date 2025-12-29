@@ -16,7 +16,7 @@
 MIDI_CREATE_DEFAULT_INSTANCE();
 
 namespace teensydmx = ::qindesign::teensydmx;
-teensydmx::Sender dmxTx{ Serial8 };
+teensydmx::Sender dmxTx{ Serial5 };
 
 // enttec pro
 unsigned char state;
@@ -164,7 +164,7 @@ void setup() {
   Serial.begin(57600);
   _midiModeActive.setup("midiMode", true);
   _enttecModeActive.setup("enttecMode", false);
-  _noteOnStartChannel.setup("noteOnStartChannel", 1);  // Default start at DMX channel 1
+  _noteOnStartChannel.setup("noteOnStartChannel", 12);  // Default start at DMX channel 1
 
   usbMIDI.begin();
   usbMIDI.setHandleNoteOn(onNoteOn);
