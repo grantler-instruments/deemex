@@ -12,3 +12,11 @@
 
 #define BUTTON_PIN 2
 #define LONG_PRESS_TIME 1000
+
+#define EEPROM_MIDI_MODE_ADDR 0
+#define EEPROM_ENTTEC_MODE_ADDR 1
+#define EEPROM_NOTE_START_ADDR 2
+#define EEPROM_INIT_FLAG_ADDR 10
+#define EEPROM_INIT_VALUE 0xAB  // Magic number to check if EEPROM is initialized
+
+

@@ -12,6 +12,7 @@
 #include "config.h"
 #include <AceButton.h>  //https://github.com/bxparks/AceButton
 #include <MIDI.h>
+#include <EEPROM.h>
 #include <TeensyDMX.h>  //https://github.com/ssilverman/TeensyDMX
 #include <Parameter.h>
 #include "DmxMessageHistory.h"
@@ -81,11 +82,16 @@ void handleButtonEvent(AceButton* /*button*/, uint8_t eventType, uint8_t buttonS
       break;
 
     case AceButton::kEventLongPressed:
-      Serial.print("  -> LONG PRESS after ");
-      Serial.print(now - pressTime);
-      Serial.println(" ms");
       _midiModeActive = !_midiModeActive;
       _enttecModeActive = !_enttecModeActive;
+
+      EEPROM.write(EEPROM_MIDI_MODE_ADDR, _midiModeActive ? 1 : 0);
+      EEPROM.write(EEPROM_ENTTEC_MODE_ADDR, _enttecModeActive ? 1 : 0);
+
+      Serial.print("Modes saved - MIDI: ");
+      Serial.print(_midiModeActive ? "ON" : "OFF");
+      Serial.print(", Enttec: ");
+      Serial.println(_enttecModeActive ? "ON" : "OFF");
       break;
 
     default:
@@ -240,10 +246,18 @@ void setup() {
   buttonConfig->setFeature(ButtonConfig::kFeatureSuppressAfterLongPress);
   buttonConfig->setLongPressDelay(1500);
 
+  // Check if EEPROM has been initialized
+  if (EEPROM.read(EEPROM_INIT_FLAG_ADDR) != EEPROM_INIT_VALUE) {
+    // First time - write defaults
+    EEPROM.write(EEPROM_MIDI_MODE_ADDR, 1);    // true
+    EEPROM.write(EEPROM_ENTTEC_MODE_ADDR, 0);  // false
+    EEPROM.write(EEPROM_NOTE_START_ADDR, 13);
+    EEPROM.write(EEPROM_INIT_FLAG_ADDR, EEPROM_INIT_VALUE);
+  }
 
-  _midiModeActive.setup("midiMode", true);
-  _enttecModeActive.setup("enttecMode", false);
-  _noteOnStartChannel.setup("noteOnStartChannel", 13);
+  _midiModeActive.setup("midiMode", EEPROM.read(EEPROM_MIDI_MODE_ADDR));
+  _enttecModeActive.setup("enttecMode", EEPROM.read(EEPROM_ENTTEC_MODE_ADDR));
+  _noteOnStartChannel.setup("noteOnStartChannel", EEPROM.read(EEPROM_NOTE_START_ADDR));
 
   usbMIDI.begin();
   usbMIDI.setHandleNoteOn(onNoteOn);
