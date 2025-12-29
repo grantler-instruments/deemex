@@ -10,6 +10,7 @@
 
 
 #include "config.h"
+#include <AceButton.h>  //https://github.com/bxparks/AceButton
 #include <MIDI.h>
 #include <TeensyDMX.h>  //https://github.com/ssilverman/TeensyDMX
 #include <Parameter.h>
@@ -20,10 +21,13 @@ static Display* display = nullptr;
 static uint32_t lastDisplayUpdate = 0;
 #endif
 
+using namespace ace_button;
+
 MIDI_CREATE_DEFAULT_INSTANCE();
 
 namespace teensydmx = ::qindesign::teensydmx;
 teensydmx::Sender dmxTx{ Serial5 };
+AceButton button(static_cast<uint8_t>(BUTTON_PIN), 0);
 
 // enttec pro
 unsigned char state;
@@ -50,6 +54,47 @@ struct ChannelState {
 ChannelState channelStates[512];
 const unsigned long PAIR_TIMEOUT = 20;  // ms - if both halves arrive within this window, combine them
 
+void handleButtonEvent(AceButton* /*button*/, uint8_t eventType, uint8_t buttonState) {
+  static unsigned long pressTime = 0;
+  static unsigned long releaseTime = 0;
+
+  unsigned long now = millis();
+
+  Serial.print("Event: ");
+  Serial.print(eventType);
+  Serial.print(" State: ");
+  Serial.print(buttonState);
+  Serial.print(" Time: ");
+  Serial.println(now);
+
+  switch (eventType) {
+    case AceButton::kEventPressed:
+      pressTime = now;
+      Serial.println("  -> Button PRESSED");
+      break;
+
+    case AceButton::kEventReleased:
+      releaseTime = now;
+      Serial.print("  -> Button RELEASED after ");
+      Serial.print(releaseTime - pressTime);
+      Serial.println(" ms");
+      break;
+
+    case AceButton::kEventLongPressed:
+      Serial.print("  -> LONG PRESS after ");
+      Serial.print(now - pressTime);
+      Serial.println(" ms");
+      _midiModeActive = !_midiModeActive;
+      _enttecModeActive = !_enttecModeActive;
+      break;
+
+    default:
+      Serial.print("  -> Unknown event: ");
+      Serial.println(eventType);
+      break;
+  }
+}
+
 void onNoteOn(byte channel, byte note, byte velocity) {
   // Use MIDI channels 1-4 to access all 512 DMX channels
   // Channel 1: DMX 1-127, Channel 2: DMX 128-254, Channel 3: DMX 255-381, Channel 4: DMX 382-508
@@ -63,7 +108,6 @@ void onNoteOn(byte channel, byte note, byte velocity) {
   }
 
   int dmxChannel = (channel - _noteOnStartChannel) * 127 + note;
-  Serial.println(dmxChannel);
   if (dmxChannel >= 1 && dmxChannel <= 512) {
     dmxTx.set(dmxChannel, velocity * 2);
     addToHistory(dmxChannel, velocity * 2);
@@ -188,6 +232,15 @@ void addToHistory(uint16_t channel, uint8_t value) {
 
 void setup() {
   Serial.begin(57600);
+
+  pinMode(BUTTON_PIN, INPUT_PULLUP);  // Use internal pull-up
+  ButtonConfig* buttonConfig = ButtonConfig::getSystemButtonConfig();
+  buttonConfig->setEventHandler(handleButtonEvent);
+  buttonConfig->setFeature(ButtonConfig::kFeatureLongPress);
+  buttonConfig->setFeature(ButtonConfig::kFeatureSuppressAfterLongPress);
+  buttonConfig->setLongPressDelay(1500);
+
+
   _midiModeActive.setup("midiMode", true);
   _enttecModeActive.setup("enttecMode", false);
   _noteOnStartChannel.setup("noteOnStartChannel", 13);
@@ -229,6 +282,8 @@ void setup() {
 
 void loop() {
   unsigned long now = millis();
+  button.check();
+
 
   if (_midiModeActive) {
     usbMIDI.read();
