@@ -5,7 +5,7 @@
 struct DeemexSettings {
   bool midiModeActive = true;
   bool enttecModeActive = false;
-  int noteOnStartChannel = 13;
+  int noteOnStartChannel = 1;
 };
 
 #if DEEMEX_ESP32
@@ -46,11 +46,11 @@ inline DeemexSettings loadSettings() {
 
   settings.midiModeActive = prefs.getBool("midi_mode", true);
   settings.enttecModeActive = prefs.getBool("enttec_mode", false);
-  settings.noteOnStartChannel = prefs.getInt("note_start", 13);
+  settings.noteOnStartChannel = prefs.getInt("note_start", 1);
   prefs.end();
 
   if (settings.noteOnStartChannel < 1 || settings.noteOnStartChannel > 16) {
-    settings.noteOnStartChannel = 13;
+    settings.noteOnStartChannel = 1;
     saveNoteOnStartChannel(settings.noteOnStartChannel);
   }
 
@@ -81,7 +81,7 @@ inline DeemexSettings loadSettings() {
   if (EEPROM.read(EEPROM_INIT_FLAG_ADDR) != EEPROM_INIT_VALUE) {
     EEPROM.write(EEPROM_MIDI_MODE_ADDR, 1);
     EEPROM.write(EEPROM_ENTTEC_MODE_ADDR, 0);
-    EEPROM.write(EEPROM_NOTE_START_ADDR, 13);
+    EEPROM.write(EEPROM_NOTE_START_ADDR, 1);
     EEPROM.write(EEPROM_INIT_FLAG_ADDR, EEPROM_INIT_VALUE);
   }
 
@@ -90,7 +90,7 @@ inline DeemexSettings loadSettings() {
   settings.noteOnStartChannel = EEPROM.read(EEPROM_NOTE_START_ADDR);
 
   if (settings.noteOnStartChannel < 1 || settings.noteOnStartChannel > 16) {
-    settings.noteOnStartChannel = 13;
+    settings.noteOnStartChannel = 1;
     saveNoteOnStartChannel(settings.noteOnStartChannel);
   }
 

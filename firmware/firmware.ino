@@ -35,7 +35,7 @@ unsigned int channel;
 
 bool _midiModeActive = true;
 bool _enttecModeActive = false;
-int _noteOnStartChannel = 13;
+int _noteOnStartChannel = 1;
 
 DmxMessageHistory messageHistory[MAX_HISTORY];
 int messageIndex = 0;
