@@ -1,21 +1,24 @@
-//teensy 4.1
-//usb type: serial+midi
-// extern "C" {
-//   // Declare the USB descriptor variables we want to override
-//   extern char usb_string_manufacturer_name[];
-//   extern uint16_t usb_string_manufacturer_name_len;
-//   extern char usb_string_product_name[];
-//   extern uint16_t usb_string_product_name_len;
-// }
-
+// Teensy 4.1: USB type Serial+MIDI
+// ESP32: ESP-NOW MIDI client + DMX512 (install ESP-NOW-MIDI library)
 
 #include "config.h"
-#include <AceButton.h>  //https://github.com/bxparks/AceButton
-#include <MIDI.h>
-#include <EEPROM.h>
-#include <TeensyDMX.h>  //https://github.com/ssilverman/TeensyDMX
-#include <Parameter.h>
+#include <AceButton.h>
 #include "DmxMessageHistory.h"
+#include "SettingsStorage.h"
+#include "platform.h"
+
+#if DEEMEX_TEENSY
+  #include <MIDI.h>
+  MIDI_CREATE_DEFAULT_INSTANCE();
+  namespace teensydmx = ::qindesign::teensydmx;
+  teensydmx::Sender dmxTx{ Serial5 };
+#elif DEEMEX_ESP32
+  #include "enomik_client.h" //https://github.com/grantler-instruments/ESP-NOW-MIDI
+  DMXSender dmx;
+  HardwareSerial dmxSerial(1);
+  enomik::Client espnowClient;
+#endif
+
 #if HAS_DISPLAY == 1
 #include "SSD1306Display.h"
 static Display* display = nullptr;
@@ -24,26 +27,19 @@ static uint32_t lastDisplayUpdate = 0;
 
 using namespace ace_button;
 
-MIDI_CREATE_DEFAULT_INSTANCE();
-
-namespace teensydmx = ::qindesign::teensydmx;
-teensydmx::Sender dmxTx{ Serial5 };
 AceButton button(static_cast<uint8_t>(BUTTON_PIN), 0);
 
-// enttec pro
 unsigned char state;
 unsigned int dataSize;
 unsigned int channel;
 
-Parameter<bool> _midiModeActive;
-Parameter<bool> _enttecModeActive;
-Parameter<int> _noteOnStartChannel;
-
+bool _midiModeActive = true;
+bool _enttecModeActive = false;
+int _noteOnStartChannel = 13;
 
 DmxMessageHistory messageHistory[MAX_HISTORY];
 int messageIndex = 0;
 
-// 14-bit CC handling
 struct ChannelState {
   uint8_t msb = 0;
   uint8_t lsb = 0;
@@ -53,7 +49,9 @@ struct ChannelState {
 };
 
 ChannelState channelStates[512];
-const unsigned long PAIR_TIMEOUT = 20;  // ms - if both halves arrive within this window, combine them
+const unsigned long PAIR_TIMEOUT = 20;
+
+void addToHistory(uint16_t channel, uint8_t value);
 
 void handleButtonEvent(AceButton* /*button*/, uint8_t eventType, uint8_t buttonState) {
   static unsigned long pressTime = 0;
@@ -85,8 +83,7 @@ void handleButtonEvent(AceButton* /*button*/, uint8_t eventType, uint8_t buttonS
       _midiModeActive = !_midiModeActive;
       _enttecModeActive = !_enttecModeActive;
 
-      EEPROM.write(EEPROM_MIDI_MODE_ADDR, _midiModeActive ? 1 : 0);
-      EEPROM.write(EEPROM_ENTTEC_MODE_ADDR, _enttecModeActive ? 1 : 0);
+      saveModeSettings(_midiModeActive, _enttecModeActive);
 
       Serial.print("Modes saved - MIDI: ");
       Serial.print(_midiModeActive ? "ON" : "OFF");
@@ -102,10 +99,6 @@ void handleButtonEvent(AceButton* /*button*/, uint8_t eventType, uint8_t buttonS
 }
 
 void onNoteOn(byte channel, byte note, byte velocity) {
-  // Use MIDI channels 1-4 to access all 512 DMX channels
-  // Channel 1: DMX 1-127, Channel 2: DMX 128-254, Channel 3: DMX 255-381, Channel 4: DMX 382-508
-  Serial.println("note on");
-
   if (channel < _noteOnStartChannel || channel > (_noteOnStartChannel + 4)) {
     return;
   }
@@ -115,13 +108,12 @@ void onNoteOn(byte channel, byte note, byte velocity) {
 
   int dmxChannel = (channel - _noteOnStartChannel) * 127 + note;
   if (dmxChannel >= 1 && dmxChannel <= 512) {
-    dmxTx.set(dmxChannel, velocity * 2);
+    dmxWrite(dmxChannel, velocity * 2);
     addToHistory(dmxChannel, velocity * 2);
   }
 }
 
-void onNoteOff(byte channel, byte note, byte velocity) {
-  // Use MIDI channels 1-4 to access all 512 DMX channels
+void onNoteOff(byte channel, byte note, byte /*velocity*/) {
   if (channel < _noteOnStartChannel || channel > (_noteOnStartChannel + 4)) {
     return;
   }
@@ -131,13 +123,12 @@ void onNoteOff(byte channel, byte note, byte velocity) {
 
   int dmxChannel = (channel - _noteOnStartChannel) * 127 + note;
   if (dmxChannel >= 1 && dmxChannel <= 512) {
-    dmxTx.set(dmxChannel, 0);
+    dmxWrite(dmxChannel, 0);
     addToHistory(dmxChannel, 0);
   }
 }
 
 void onControlChange(byte channel, byte control, byte value) {
-  // Determine if MSB (CC 0-31) or LSB (CC 32-63)
   bool isMSB = (control < 32);
   int baseControl = isMSB ? control : (control - 32);
   int dmxChannel = (channel - 1) * 32 + baseControl;
@@ -145,7 +136,6 @@ void onControlChange(byte channel, byte control, byte value) {
   if (dmxChannel >= 0 && dmxChannel < 512) {
     unsigned long now = millis();
 
-    // Check if we should reset state due to timeout
     if (now - channelStates[dmxChannel].lastUpdateTime > PAIR_TIMEOUT) {
       channelStates[dmxChannel].msbReceived = false;
       channelStates[dmxChannel].lsbReceived = false;
@@ -161,35 +151,30 @@ void onControlChange(byte channel, byte control, byte value) {
       channelStates[dmxChannel].lastUpdateTime = now;
     }
 
-    // If we have both MSB and LSB, update DMX
     if (channelStates[dmxChannel].msbReceived && channelStates[dmxChannel].lsbReceived) {
-      // Combine into 14-bit value
       uint16_t fullValue = (channelStates[dmxChannel].msb << 7) | channelStates[dmxChannel].lsb;
-
-      // Scale to 8-bit DMX (0-16383 → 0-255)
       uint8_t dmxValue = fullValue >> 6;
 
-      // Write to DMX (TeensyDMX channels are 1-indexed)
-      dmxTx.set(dmxChannel + 1, dmxValue);
+      dmxWrite(dmxChannel + 1, dmxValue);
       addToHistory(dmxChannel + 1, dmxValue);
 
-      // Clear flags for next pair
-      channelStates[dmxChannel]
-        .msbReceived = false;
+      channelStates[dmxChannel].msbReceived = false;
       channelStates[dmxChannel].lsbReceived = false;
     }
   }
 }
 
-void onAfterTouchPoly(byte channel, byte note, byte velocity) {}
-void onProgramChange(byte channel, byte program) {}
-void onAfterTouch(byte channel, byte pressure) {}
-void onPitchChange(byte channel, int pitch) {}
-void onSystemExclusiveChunk(const byte* data, uint16_t length, bool last) {}
-void onSystemExclusive(byte* data, unsigned int length) {}
-void onTimeCodeQuarterFrame(byte data) {}
-void onSongPosition(uint16_t beats) {}
-void onSongSelect(byte songNumber) {}
+void onAfterTouchPoly(byte /*channel*/, byte /*note*/, byte /*velocity*/) {}
+void onProgramChange(byte /*channel*/, byte /*program*/) {}
+void onAfterTouch(byte /*channel*/, byte /*pressure*/) {}
+#if DEEMEX_TEENSY
+void onPitchChange(byte /*channel*/, int /*pitch*/) {}
+#else
+void onPitchBend(byte /*channel*/, int /*value*/) {}
+#endif
+void onTimeCodeQuarterFrame(byte /*data*/) {}
+void onSongPosition(uint16_t /*beats*/) {}
+void onSongSelect(byte /*songNumber*/) {}
 void onTuneRequest() {}
 void onClock() {}
 void onStart() {}
@@ -197,12 +182,57 @@ void onContinue() {}
 void onStop() {}
 void onActiveSensing() {}
 void onSystemReset() {}
-void onRealTimeSystem(byte realtimebyte) {}
+
+void registerMidiHandlers() {
+#if DEEMEX_TEENSY
+  usbMIDI.setHandleNoteOn(onNoteOn);
+  usbMIDI.setHandleNoteOff(onNoteOff);
+  usbMIDI.setHandleAfterTouchPoly(onAfterTouchPoly);
+  usbMIDI.setHandleControlChange(onControlChange);
+  usbMIDI.setHandleProgramChange(onProgramChange);
+  usbMIDI.setHandleTimeCodeQuarterFrame(onTimeCodeQuarterFrame);
+  usbMIDI.setHandleSongSelect(onSongSelect);
+  usbMIDI.setHandleTuneRequest(onTuneRequest);
+  usbMIDI.setHandleClock(onClock);
+  usbMIDI.setHandleStart(onStart);
+  usbMIDI.setHandleContinue(onContinue);
+  usbMIDI.setHandleStop(onStop);
+  usbMIDI.setHandleActiveSensing(onActiveSensing);
+  usbMIDI.setHandleSystemReset(onSystemReset);
+#elif DEEMEX_ESP32
+  espnowClient.setHandleNoteOn(onNoteOn);
+  espnowClient.setHandleNoteOff(onNoteOff);
+  espnowClient.setHandleControlChange(onControlChange);
+  espnowClient.setHandleProgramChange(onProgramChange);
+  espnowClient.setHandlePitchBend(onPitchBend);
+  espnowClient.setHandleAfterTouchChannel(onAfterTouch);
+  espnowClient.setHandleAfterTouchPoly(onAfterTouchPoly);
+#endif
+}
+
+void initMidi() {
+#if DEEMEX_TEENSY
+  usbMIDI.begin();
+#elif DEEMEX_ESP32
+  WiFi.mode(WIFI_STA);
+  espnowClient.begin();
+  // Register with dongle on first message
+  espnowClient.sendControlChange(127, 127, 16);
+#endif
+  registerMidiHandlers();
+}
+
+void pollMidi() {
+#if DEEMEX_TEENSY
+  usbMIDI.read();
+#elif DEEMEX_ESP32
+  espnowClient.loop();
+#endif
+}
 
 void readSerial() {
   unsigned char c;
 
-  // enttec dmx pro
   while (Serial.available()) {
     c = Serial.read();
 
@@ -220,7 +250,7 @@ void readSerial() {
       state = c;
       channel = 1;
     } else if (state == DMX_START_CODE && channel < dataSize) {
-      dmxTx.set(channel, c);
+      dmxWrite(channel, c);
       addToHistory(channel, c);
       channel++;
     } else if (state == DMX_START_CODE && channel == dataSize && c == DMX_PRO_END_MSG) {
@@ -237,56 +267,31 @@ void addToHistory(uint16_t channel, uint8_t value) {
 }
 
 void setup() {
-  Serial.begin(57600);
+  Serial.begin(SERIAL_BAUD);
 
-  pinMode(BUTTON_PIN, INPUT_PULLUP);  // Use internal pull-up
+  pinMode(BUTTON_PIN, INPUT_PULLUP);
   ButtonConfig* buttonConfig = ButtonConfig::getSystemButtonConfig();
   buttonConfig->setEventHandler(handleButtonEvent);
   buttonConfig->setFeature(ButtonConfig::kFeatureLongPress);
   buttonConfig->setFeature(ButtonConfig::kFeatureSuppressAfterLongPress);
   buttonConfig->setLongPressDelay(1500);
 
-  // Check if EEPROM has been initialized
-  if (EEPROM.read(EEPROM_INIT_FLAG_ADDR) != EEPROM_INIT_VALUE) {
-    // First time - write defaults
-    EEPROM.write(EEPROM_MIDI_MODE_ADDR, 1);    // true
-    EEPROM.write(EEPROM_ENTTEC_MODE_ADDR, 0);  // false
-    EEPROM.write(EEPROM_NOTE_START_ADDR, 13);
-    EEPROM.write(EEPROM_INIT_FLAG_ADDR, EEPROM_INIT_VALUE);
-  }
+  const DeemexSettings settings = loadSettings();
+  _midiModeActive = settings.midiModeActive;
+  _enttecModeActive = settings.enttecModeActive;
+  _noteOnStartChannel = settings.noteOnStartChannel;
 
-  _midiModeActive.setup("midiMode", EEPROM.read(EEPROM_MIDI_MODE_ADDR));
-  _enttecModeActive.setup("enttecMode", EEPROM.read(EEPROM_ENTTEC_MODE_ADDR));
-  _noteOnStartChannel.setup("noteOnStartChannel", EEPROM.read(EEPROM_NOTE_START_ADDR));
+  initMidi();
 
-  usbMIDI.begin();
-  usbMIDI.setHandleNoteOn(onNoteOn);
-  usbMIDI.setHandleNoteOff(onNoteOff);
-  usbMIDI.setHandleAfterTouchPoly(onAfterTouchPoly);
-  usbMIDI.setHandleControlChange(onControlChange);
-  usbMIDI.setHandleProgramChange(onProgramChange);
-  usbMIDI.setHandleTimeCodeQuarterFrame(onTimeCodeQuarterFrame);
-  usbMIDI.setHandleSongSelect(onSongSelect);
-  usbMIDI.setHandleTuneRequest(onTuneRequest);
-  usbMIDI.setHandleClock(onClock);
-  usbMIDI.setHandleStart(onStart);
-  usbMIDI.setHandleContinue(onContinue);
-  usbMIDI.setHandleStop(onStop);
-  usbMIDI.setHandleActiveSensing(onActiveSensing);
-  usbMIDI.setHandleSystemReset(onSystemReset);
-
-  // Turn on the LED, for indicating activity
   pinMode(LED_BUILTIN, OUTPUT);
-  digitalWriteFast(LED_BUILTIN, HIGH);
+  setLedHigh();
 
   state = DMX_PRO_END_MSG;
-  dmxTx.begin();
+  dmxBegin();
 
 #if HAS_DISPLAY == 1
   static SSD1306Display ssd1306;
-
   display = &ssd1306;
-
   if (!display->begin()) {
     Serial.println("Display init failed");
     display = nullptr;
@@ -298,13 +303,15 @@ void loop() {
   unsigned long now = millis();
   button.check();
 
-
   if (_midiModeActive) {
-    usbMIDI.read();
+    pollMidi();
   }
   if (_enttecModeActive) {
     readSerial();
   }
+
+  dmxPoll();
+
 #if HAS_DISPLAY == 1
   if (display && (now - lastDisplayUpdate) >= UPDATE_DISPLAY_INTERVAL) {
     lastDisplayUpdate = now;

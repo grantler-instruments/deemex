@@ -1,5 +1,6 @@
 #include "config.h"
 #include "./Display.h"
+#include <Wire.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
 
@@ -13,6 +14,9 @@ public:
     : oled_(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET) {}
 
   bool begin() override {
+#if DEEMEX_ESP32
+    Wire.begin(SDA, SCL);
+#endif
     if (!oled_.begin(SSD1306_SWITCHCAPVCC, SCREEN_ADDRESS)) {
       return false;
     }
@@ -46,9 +50,9 @@ private:
     oled_.setCursor(0, 0);
     snprintf(buf, sizeof(buf),
              "deemex v%d.%d.%d t:%lu",
-             VERSION_MAJOR,
-             VERSION_MINOR,
-             VERSION_PATCH,
+             DEEMEX_VERSION_MAJOR,
+             DEEMEX_VERSION_MINOR,
+             DEEMEX_VERSION_PATCH,
              displayUptime);
 
     oled_.println(buf);
